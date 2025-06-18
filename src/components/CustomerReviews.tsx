@@ -12,8 +12,7 @@ const CustomerReviews: React.FC = () => {
       rating: 5,
       comment: 'Rebearth Pro has transformed my tomato farm. The yield increased by 40% and the plants are much healthier. Highly recommend!',
       date: '2024-01-15',
-      location: 'Nakuru, Kenya',
-      avatar: 'https://images.pexels.com/photos/1222271/pexels-photo-1222271.jpeg?auto=compress&cs=tinysrgb&w=150'
+      location: 'Nakuru, Kenya'
     },
     {
       id: 2,
@@ -21,8 +20,7 @@ const CustomerReviews: React.FC = () => {
       rating: 5,
       comment: 'The customer service is excellent and the products really work. My vegetables have never looked better!',
       date: '2024-01-20',
-      location: 'Kiambu, Kenya',
-      avatar: 'https://images.pexels.com/photos/1239291/pexels-photo-1239291.jpeg?auto=compress&cs=tinysrgb&w=150'
+      location: 'Kiambu, Kenya'
     },
     {
       id: 3,
@@ -30,8 +28,7 @@ const CustomerReviews: React.FC = () => {
       rating: 4,
       comment: 'Great products and fast delivery. The Rebearth 5.0 helped my crops recover from drought stress quickly.',
       date: '2024-01-25',
-      location: 'Kisumu, Kenya',
-      avatar: 'https://images.pexels.com/photos/1681010/pexels-photo-1681010.jpeg?auto=compress&cs=tinysrgb&w=150'
+      location: 'Kisumu, Kenya'
     },
     {
       id: 4,
@@ -39,8 +36,7 @@ const CustomerReviews: React.FC = () => {
       rating: 5,
       comment: 'The monkey repellant works perfectly! No more crop damage and it\'s completely safe for the environment.',
       date: '2024-02-01',
-      location: 'Nyeri, Kenya',
-      avatar: 'https://images.pexels.com/photos/1130626/pexels-photo-1130626.jpeg?auto=compress&cs=tinysrgb&w=150'
+      location: 'Nyeri, Kenya'
     },
     {
       id: 5,
@@ -48,8 +44,7 @@ const CustomerReviews: React.FC = () => {
       rating: 5,
       comment: 'Professional team and quality products. My greenhouse productivity has doubled since using their solutions.',
       date: '2024-02-05',
-      location: 'Eldoret, Kenya',
-      avatar: 'https://images.pexels.com/photos/1043471/pexels-photo-1043471.jpeg?auto=compress&cs=tinysrgb&w=150'
+      location: 'Eldoret, Kenya'
     }
   ];
 
@@ -97,39 +92,29 @@ const CustomerReviews: React.FC = () => {
           <div className="bg-white rounded-2xl shadow-2xl p-8 md:p-12 relative overflow-hidden">
             <Quote className="absolute top-6 right-6 h-12 w-12 text-green-100" />
             
-            <div className="flex flex-col md:flex-row items-center md:items-start space-y-6 md:space-y-0 md:space-x-8">
-              <div className="flex-shrink-0">
-                <img
-                  src={reviews[currentReview].avatar}
-                  alt={reviews[currentReview].name}
-                  className="w-20 h-20 rounded-full object-cover border-4 border-green-200 shadow-lg"
-                />
+            <div className="flex flex-col items-center text-center space-y-6">
+              <div className="flex justify-center mb-4">
+                {renderStars(reviews[currentReview].rating)}
               </div>
               
-              <div className="flex-1 text-center md:text-left">
-                <div className="flex justify-center md:justify-start mb-4">
-                  {renderStars(reviews[currentReview].rating)}
-                </div>
-                
-                <p className="text-gray-700 text-lg leading-relaxed mb-6 italic">
-                  "{reviews[currentReview].comment}"
+              <p className="text-gray-700 text-lg leading-relaxed mb-6 italic">
+                "{reviews[currentReview].comment}"
+              </p>
+              
+              <div>
+                <h4 className="font-bold text-gray-900 text-xl">
+                  {reviews[currentReview].name}
+                </h4>
+                <p className="text-green-600 font-medium">
+                  {reviews[currentReview].location}
                 </p>
-                
-                <div>
-                  <h4 className="font-bold text-gray-900 text-xl">
-                    {reviews[currentReview].name}
-                  </h4>
-                  <p className="text-green-600 font-medium">
-                    {reviews[currentReview].location}
-                  </p>
-                  <p className="text-gray-500 text-sm">
-                    {new Date(reviews[currentReview].date).toLocaleDateString('en-US', {
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric'
-                    })}
-                  </p>
-                </div>
+                <p className="text-gray-500 text-sm">
+                  {new Date(reviews[currentReview].date).toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                  })}
+                </p>
               </div>
             </div>
           </div>

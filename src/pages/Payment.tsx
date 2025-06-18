@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, CreditCard, Smartphone, CheckCircle, AlertTriangle, Copy } from 'lucide-react';
+import { ArrowLeft, Smartphone, CheckCircle, AlertTriangle, Copy, Download, FileText } from 'lucide-react';
 import { useCart } from '../context/CartContext';
+import { initiateSTKPush } from '../lib/mpesa';
+import { createInvoice, generateInvoiceNumber, downloadInvoice, updateInvoiceStatus } from '../lib/invoice';
+import { sendPaymentConfirmationSMS } from '../lib/sms';
+import { supabase } from '../lib/supabase';
 
 interface CheckoutData {
   name: string;
@@ -21,12 +25,13 @@ const Payment: React.FC = () => {
   const navigate = useNavigate();
   const { clearCart } = useCart();
   const [checkoutData, setCheckoutData] = useState<CheckoutData | null>(null);
-  const [paymentMethod, setPaymentMethod] = useState<'mpesa' | 'card'>('mpesa');
   const [isProcessing, setIsProcessing] = useState(false);
   const [paymentComplete, setPaymentComplete] = useState(false);
   const [mpesaNumber, setMpesaNumber] = useState('');
   const [showPinPrompt, setShowPinPrompt] = useState(false);
-  const [accountNumber, setAccountNumber] = useState('');
+  const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [invoiceGenerated, setInvoiceGenerated] = useState(false);
+  const [paymentData, setPaymentData] = useState<any>(null);
 
   useEffect(() => {
     const storedData = sessionStorage.getItem('checkoutData');
@@ -34,49 +39,184 @@ const Payment: React.FC = () => {
       const data = JSON.parse(storedData);
       setCheckoutData(data);
       setMpesaNumber(data.phone);
-      // Generate unique account number
-      setAccountNumber(`ACC${Date.now().toString().slice(-8)}`);
+      
+      // Generate invoice number
+      const newInvoiceNumber = generateInvoiceNumber();
+      setInvoiceNumber(newInvoiceNumber);
     } else {
       navigate('/checkout');
     }
   }, [navigate]);
 
-  const handlePayment = () => {
+  const generateInvoice = async () => {
     if (!checkoutData) return;
+
+    try {
+      const invoiceData = {
+        invoiceNumber,
+        customerName: checkoutData.name,
+        customerEmail: checkoutData.email,
+        customerPhone: checkoutData.phone,
+        customerAddress: `${checkoutData.address}, ${checkoutData.city}`,
+        items: checkoutData.cartItems.map(item => ({
+          name: item.product.name,
+          quantity: item.quantity,
+          price: item.product.price,
+          total: item.product.price * item.quantity,
+        })),
+        totalAmount: checkoutData.totalAmount,
+        status: 'pending' as const,
+      };
+
+      // Create invoice in database
+      await createInvoice(invoiceData);
+      
+      // Download invoice PDF
+      downloadInvoice(invoiceData, 'invoice');
+      
+      setInvoiceGenerated(true);
+    } catch (error) {
+      console.error('Failed to generate invoice:', error);
+      alert('Failed to generate invoice. Please try again.');
+    }
+  };
+
+  const handlePayment = async () => {
+    if (!checkoutData || !invoiceGenerated) {
+      alert('Please generate invoice first');
+      return;
+    }
 
     setIsProcessing(true);
     
-    // Simulate M-Pesa payment process
-    setTimeout(() => {
+    try {
+      // Format phone number (remove + and ensure it starts with 254)
+      let formattedPhone = mpesaNumber.replace(/\+/g, '');
+      if (formattedPhone.startsWith('0')) {
+        formattedPhone = '254' + formattedPhone.substring(1);
+      }
+      if (!formattedPhone.startsWith('254')) {
+        formattedPhone = '254' + formattedPhone;
+      }
+
+      // Initiate STK Push
+      const stkResponse = await initiateSTKPush(
+        formattedPhone,
+        checkoutData.totalAmount,
+        invoiceNumber,
+        `Payment for invoice ${invoiceNumber}`
+      );
+
+      if (stkResponse.ResponseCode === '0') {
+        // Create payment record in database
+        const { data: paymentRecord, error } = await supabase
+          .from('payments')
+          .insert({
+            invoice_id: invoiceNumber,
+            transaction_id: stkResponse.CheckoutRequestID,
+            phone_number: formattedPhone,
+            amount: checkoutData.totalAmount,
+            status: 'pending',
+          })
+          .select()
+          .single();
+
+        if (error) {
+          throw new Error('Failed to create payment record');
+        }
+
+        setPaymentData(paymentRecord);
+        setIsProcessing(false);
+        setShowPinPrompt(true);
+        
+        // Start polling for payment status
+        pollPaymentStatus(stkResponse.CheckoutRequestID);
+      } else {
+        throw new Error(stkResponse.ResponseDescription || 'Failed to initiate payment');
+      }
+    } catch (error) {
+      console.error('Payment initiation failed:', error);
       setIsProcessing(false);
-      setShowPinPrompt(true);
-    }, 2000);
+      alert('Failed to initiate payment. Please try again.');
+    }
   };
 
-  const handlePinConfirmation = () => {
-    setShowPinPrompt(false);
-    setIsProcessing(true);
+  const pollPaymentStatus = async (checkoutRequestId: string) => {
+    // Poll every 5 seconds for 2 minutes
+    const maxAttempts = 24;
+    let attempts = 0;
 
-    // Simulate payment completion
-    setTimeout(() => {
-      setIsProcessing(false);
-      setPaymentComplete(true);
+    const poll = setInterval(async () => {
+      attempts++;
+      
+      try {
+        // Check payment status in database
+        const { data: payment } = await supabase
+          .from('payments')
+          .select('*')
+          .eq('transaction_id', checkoutRequestId)
+          .single();
+
+        if (payment?.status === 'completed') {
+          clearInterval(poll);
+          handlePaymentSuccess(payment);
+        } else if (payment?.status === 'failed' || attempts >= maxAttempts) {
+          clearInterval(poll);
+          handlePaymentFailure();
+        }
+      } catch (error) {
+        console.error('Error polling payment status:', error);
+      }
+    }, 5000);
+  };
+
+  const handlePaymentSuccess = async (payment: any) => {
+    setShowPinPrompt(false);
+    setPaymentComplete(true);
+    
+    try {
+      // Update invoice status
+      await updateInvoiceStatus(invoiceNumber, 'paid');
+      
+      // Send SMS confirmation
+      await sendPaymentConfirmationSMS(
+        checkoutData!.phone,
+        invoiceNumber,
+        checkoutData!.totalAmount,
+        payment.mpesa_receipt_number || 'N/A'
+      );
+      
+      // Generate and download receipt
+      const receiptData = {
+        invoiceNumber,
+        customerName: checkoutData!.name,
+        customerEmail: checkoutData!.email,
+        customerPhone: checkoutData!.phone,
+        customerAddress: `${checkoutData!.address}, ${checkoutData!.city}`,
+        items: checkoutData!.cartItems.map(item => ({
+          name: item.product.name,
+          quantity: item.quantity,
+          price: item.product.price,
+          total: item.product.price * item.quantity,
+        })),
+        totalAmount: checkoutData!.totalAmount,
+        status: 'paid' as const,
+      };
+      
+      downloadInvoice(receiptData, 'receipt');
+      
+      // Clear cart and checkout data
       clearCart();
-      
-      // Store order in user's order history
-      const orders = JSON.parse(localStorage.getItem('userOrders') || '[]');
-      orders.push({
-        ...checkoutData,
-        paymentMethod,
-        accountNumber,
-        status: 'completed',
-        paidAt: new Date().toISOString()
-      });
-      localStorage.setItem('userOrders', JSON.stringify(orders));
-      
-      // Clear checkout data
       sessionStorage.removeItem('checkoutData');
-    }, 3000);
+    } catch (error) {
+      console.error('Error processing payment success:', error);
+    }
+  };
+
+  const handlePaymentFailure = () => {
+    setShowPinPrompt(false);
+    setIsProcessing(false);
+    alert('Payment failed or timed out. Please try again.');
   };
 
   const copyToClipboard = (text: string) => {
@@ -100,28 +240,16 @@ const Payment: React.FC = () => {
           <CheckCircle className="h-16 w-16 text-green-600 mx-auto mb-4" />
           <h2 className="text-2xl font-bold text-gray-900 mb-4">Payment Successful!</h2>
           <p className="text-gray-600 mb-6">
-            Your order has been confirmed and will be processed shortly.
+            Your payment has been confirmed and your order will be processed shortly.
           </p>
           
           <div className="bg-gray-50 rounded-lg p-4 mb-6 text-left">
             <div className="flex justify-between items-center mb-2">
-              <span className="text-gray-600">Order Number:</span>
+              <span className="text-gray-600">Invoice Number:</span>
               <div className="flex items-center space-x-2">
-                <span className="font-bold text-gray-900">{checkoutData.orderNumber}</span>
+                <span className="font-bold text-gray-900">{invoiceNumber}</span>
                 <button
-                  onClick={() => copyToClipboard(checkoutData.orderNumber)}
-                  className="text-green-600 hover:text-green-700"
-                >
-                  <Copy className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-            <div className="flex justify-between items-center mb-2">
-              <span className="text-gray-600">Account Number:</span>
-              <div className="flex items-center space-x-2">
-                <span className="font-bold text-gray-900">{accountNumber}</span>
-                <button
-                  onClick={() => copyToClipboard(accountNumber)}
+                  onClick={() => copyToClipboard(invoiceNumber)}
                   className="text-green-600 hover:text-green-700"
                 >
                   <Copy className="h-4 w-4" />
@@ -170,152 +298,81 @@ const Payment: React.FC = () => {
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Payment Methods */}
+          {/* Payment Form */}
           <div className="bg-white rounded-xl shadow-lg p-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-6">Payment Method</h2>
+            <h2 className="text-2xl font-bold text-gray-900 mb-6">M-Pesa Payment</h2>
             
-            <div className="space-y-4 mb-6">
-              <div
-                className={`border-2 rounded-lg p-4 cursor-pointer transition-all duration-200 ${
-                  paymentMethod === 'mpesa' 
-                    ? 'border-green-500 bg-green-50' 
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-                onClick={() => setPaymentMethod('mpesa')}
-              >
-                <div className="flex items-center space-x-3">
-                  <Smartphone className="h-6 w-6 text-green-600" />
-                  <div>
-                    <h3 className="font-semibold text-gray-900">M-Pesa</h3>
-                    <p className="text-sm text-gray-600">Pay with your mobile money</p>
-                  </div>
-                </div>
+            {/* Invoice Generation */}
+            {!invoiceGenerated && (
+              <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <h3 className="font-semibold text-blue-800 mb-2">Step 1: Generate Invoice</h3>
+                <p className="text-blue-700 text-sm mb-4">
+                  Generate your invoice before proceeding with payment.
+                </p>
+                <button
+                  onClick={generateInvoice}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors duration-200"
+                >
+                  <FileText className="h-4 w-4" />
+                  <span>Generate Invoice</span>
+                </button>
               </div>
+            )}
 
-              <div
-                className={`border-2 rounded-lg p-4 cursor-pointer transition-all duration-200 ${
-                  paymentMethod === 'card' 
-                    ? 'border-green-500 bg-green-50' 
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-                onClick={() => setPaymentMethod('card')}
-              >
-                <div className="flex items-center space-x-3">
-                  <CreditCard className="h-6 w-6 text-blue-600" />
-                  <div>
-                    <h3 className="font-semibold text-gray-900">Credit/Debit Card</h3>
-                    <p className="text-sm text-gray-600">Pay with Visa, Mastercard</p>
-                  </div>
-                </div>
+            {invoiceGenerated && (
+              <div className="mb-6 p-4 bg-green-50 border border-green-200 rounded-lg">
+                <h3 className="font-semibold text-green-800 mb-2">Invoice Generated</h3>
+                <p className="text-green-700 text-sm">
+                  Invoice #{invoiceNumber} has been generated and downloaded.
+                </p>
               </div>
-            </div>
+            )}
 
             {/* M-Pesa Payment Form */}
-            {paymentMethod === 'mpesa' && (
-              <div className="space-y-4">
-                <div>
-                  <label htmlFor="mpesaNumber" className="block text-sm font-medium text-gray-700 mb-2">
-                    M-Pesa Phone Number
-                  </label>
-                  <input
-                    type="tel"
-                    id="mpesaNumber"
-                    value={mpesaNumber}
-                    onChange={(e) => setMpesaNumber(e.target.value)}
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-green-500 transition-colors duration-200"
-                    placeholder="+254 xxx xxx xxx"
-                  />
-                </div>
-                
-                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <h4 className="font-semibold text-green-800 mb-2">Payment Instructions:</h4>
-                  <ol className="text-sm text-green-700 space-y-1">
-                    <li>1. Click "Pay with M-Pesa" below</li>
-                    <li>2. You'll receive an STK push notification</li>
-                    <li>3. Enter your M-Pesa PIN to complete payment</li>
-                    <li>4. You'll receive a confirmation SMS</li>
-                  </ol>
-                </div>
-
-                <button
-                  onClick={handlePayment}
-                  disabled={isProcessing || !mpesaNumber}
-                  className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white py-4 rounded-lg font-semibold flex items-center justify-center space-x-2 transition-all duration-300"
-                >
-                  {isProcessing ? (
-                    <>
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                      <span>Processing...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Smartphone className="h-5 w-5" />
-                      <span>Pay with M-Pesa</span>
-                    </>
-                  )}
-                </button>
+            <div className="space-y-4">
+              <div>
+                <label htmlFor="mpesaNumber" className="block text-sm font-medium text-gray-700 mb-2">
+                  M-Pesa Phone Number
+                </label>
+                <input
+                  type="tel"
+                  id="mpesaNumber"
+                  value={mpesaNumber}
+                  onChange={(e) => setMpesaNumber(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-green-500 transition-colors duration-200"
+                  placeholder="+254 xxx xxx xxx"
+                />
               </div>
-            )}
-
-            {/* Card Payment Form */}
-            {paymentMethod === 'card' && (
-              <div className="space-y-4">
-                <div>
-                  <label htmlFor="cardNumber" className="block text-sm font-medium text-gray-700 mb-2">
-                    Card Number
-                  </label>
-                  <input
-                    type="text"
-                    id="cardNumber"
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-green-500 transition-colors duration-200"
-                    placeholder="1234 5678 9012 3456"
-                  />
-                </div>
-                
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label htmlFor="expiry" className="block text-sm font-medium text-gray-700 mb-2">
-                      Expiry Date
-                    </label>
-                    <input
-                      type="text"
-                      id="expiry"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-green-500 transition-colors duration-200"
-                      placeholder="MM/YY"
-                    />
-                  </div>
-                  <div>
-                    <label htmlFor="cvv" className="block text-sm font-medium text-gray-700 mb-2">
-                      CVV
-                    </label>
-                    <input
-                      type="text"
-                      id="cvv"
-                      className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:border-green-500 transition-colors duration-200"
-                      placeholder="123"
-                    />
-                  </div>
-                </div>
-
-                <button
-                  onClick={handlePayment}
-                  disabled={isProcessing}
-                  className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white py-4 rounded-lg font-semibold flex items-center justify-center space-x-2 transition-all duration-300"
-                >
-                  {isProcessing ? (
-                    <>
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                      <span>Processing...</span>
-                    </>
-                  ) : (
-                    <>
-                      <CreditCard className="h-5 w-5" />
-                      <span>Pay with Card</span>
-                    </>
-                  )}
-                </button>
+              
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <h4 className="font-semibold text-green-800 mb-2">Payment Instructions:</h4>
+                <ol className="text-sm text-green-700 space-y-1">
+                  <li>1. Generate invoice first (if not done)</li>
+                  <li>2. Click "Pay with M-Pesa" below</li>
+                  <li>3. You'll receive an STK push notification</li>
+                  <li>4. Enter your M-Pesa PIN to complete payment</li>
+                  <li>5. You'll receive a confirmation SMS and receipt</li>
+                </ol>
               </div>
-            )}
+
+              <button
+                onClick={handlePayment}
+                disabled={isProcessing || !mpesaNumber || !invoiceGenerated}
+                className="w-full bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white py-4 rounded-lg font-semibold flex items-center justify-center space-x-2 transition-all duration-300"
+              >
+                {isProcessing ? (
+                  <>
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                    <span>Processing...</span>
+                  </>
+                ) : (
+                  <>
+                    <Smartphone className="h-5 w-5" />
+                    <span>Pay with M-Pesa</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
 
           {/* Order Summary */}
@@ -324,12 +381,8 @@ const Payment: React.FC = () => {
             
             <div className="space-y-4 mb-6">
               <div className="flex justify-between items-center">
-                <span className="text-gray-600">Order Number:</span>
-                <span className="font-bold text-gray-900">{checkoutData.orderNumber}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-gray-600">Account Number:</span>
-                <span className="font-bold text-gray-900">{accountNumber}</span>
+                <span className="text-gray-600">Invoice Number:</span>
+                <span className="font-bold text-gray-900">{invoiceNumber || 'Not generated'}</span>
               </div>
             </div>
 
@@ -398,12 +451,8 @@ const Payment: React.FC = () => {
               </div>
 
               <div className="space-y-3">
-                <button
-                  onClick={handlePinConfirmation}
-                  className="w-full bg-green-600 text-white py-3 rounded-lg hover:bg-green-700 transition-colors duration-200"
-                >
-                  I've Entered My PIN
-                </button>
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-green-600 mx-auto"></div>
+                <p className="text-sm text-gray-600">Waiting for payment confirmation...</p>
                 <button
                   onClick={() => setShowPinPrompt(false)}
                   className="w-full bg-gray-200 text-gray-700 py-3 rounded-lg hover:bg-gray-300 transition-colors duration-200"

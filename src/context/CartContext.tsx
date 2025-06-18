@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { CartItem, Product } from '../types';
 import { useAuth } from './AuthContext';
+import { supabase } from '../lib/supabase';
 
 interface CartContextType {
   cartItems: CartItem[];
@@ -29,25 +30,48 @@ export const CartProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isCartOpen, setIsCartOpen] = useState(false);
   const { user } = useAuth();
 
-  // Load cart from server/database when user changes
+  // Load cart from database when user changes
   useEffect(() => {
     if (user) {
-      const userCarts = JSON.parse(localStorage.getItem('rebearthUserCarts') || '{}');
-      const userCart = userCarts[user.id] || [];
-      setCartItems(userCart);
+      loadCartFromDatabase();
     } else {
       setCartItems([]);
     }
   }, [user]);
 
-  // Save cart to server/database whenever it changes
+  // Save cart to database whenever it changes
   useEffect(() => {
-    if (user) {
-      const userCarts = JSON.parse(localStorage.getItem('rebearthUserCarts') || '{}');
-      userCarts[user.id] = cartItems;
-      localStorage.setItem('rebearthUserCarts', JSON.stringify(userCarts));
+    if (user && cartItems.length >= 0) {
+      saveCartToDatabase();
     }
   }, [cartItems, user]);
+
+  const loadCartFromDatabase = async () => {
+    if (!user) return;
+
+    try {
+      // For now, we'll use localStorage as a simple solution
+      // In a real app, you'd store cart data in your database
+      const savedCart = localStorage.getItem(`cart_${user.id}`);
+      if (savedCart) {
+        setCartItems(JSON.parse(savedCart));
+      }
+    } catch (error) {
+      console.error('Failed to load cart:', error);
+    }
+  };
+
+  const saveCartToDatabase = async () => {
+    if (!user) return;
+
+    try {
+      // For now, we'll use localStorage as a simple solution
+      // In a real app, you'd store cart data in your database
+      localStorage.setItem(`cart_${user.id}`, JSON.stringify(cartItems));
+    } catch (error) {
+      console.error('Failed to save cart:', error);
+    }
+  };
 
   const addToCart = (product: Product, quantity: number = 1) => {
     if (!user) {

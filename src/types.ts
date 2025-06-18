@@ -35,7 +35,6 @@ export interface CustomerReview {
   comment: string;
   date: string;
   location: string;
-  avatar?: string;
 }
 
 export interface User {
@@ -65,4 +64,35 @@ export interface Order extends CheckoutData {
   paymentMethod: string;
   status: string;
   paidAt: string;
+}
+
+export interface Invoice {
+  id: string;
+  invoice_number: string;
+  customer_name: string;
+  customer_email: string;
+  customer_phone: string;
+  customer_address: string;
+  items: Array<{
+    name: string;
+    quantity: number;
+    price: number;
+    total: number;
+  }>;
+  total_amount: number;
+  status: 'pending' | 'paid' | 'cancelled';
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Payment {
+  id: string;
+  invoice_id: string;
+  transaction_id: string;
+  mpesa_receipt_number?: string;
+  phone_number: string;
+  amount: number;
+  status: 'pending' | 'completed' | 'failed';
+  created_at: string;
+  updated_at: string;
 }
