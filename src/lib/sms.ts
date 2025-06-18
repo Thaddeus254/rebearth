@@ -1,9 +1,9 @@
 // SMS API Configuration
 // TODO: Replace with your actual SMS API credentials
 const SMS_CONFIG = {
-  API_KEY: 'YOUR_SMS_API_KEY',
-  SENDER_ID: 'REBEARTH',
-  BASE_URL: 'https://api.africastalking.com/version1/messaging', // Example using Africa's Talking
+  API_KEY: '4206bbb432bfb5993eaf1d7480e8c269-05deb6ab-cc4c-408b-b6d3-5a8709496032',
+  SENDER_ID: 'REBEARTH SOLUTIONS LTD',
+  BASE_URL: 'https://pezm8l.api.infobip.com/version1/messaging', // Example using Africa's Talking
 };
 
 export interface SMSData {
@@ -21,7 +21,7 @@ export const sendSMS = async (smsData: SMSData): Promise<any> => {
         'Content-Type': 'application/x-www-form-urlencoded',
       },
       body: new URLSearchParams({
-        username: 'sandbox', // Replace with your username
+        username: 'Walter', // Replace with your username
         to: smsData.to,
         message: smsData.message,
         from: SMS_CONFIG.SENDER_ID,
