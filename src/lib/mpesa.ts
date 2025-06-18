@@ -1,13 +1,13 @@
 // M-Pesa API Configuration
 // TODO: Replace these with your actual M-Pesa API credentials
 const MPESA_CONFIG = {
-  CONSUMER_KEY: 'YOUR_MPESA_CONSUMER_KEY',
-  CONSUMER_SECRET: 'YOUR_MPESA_CONSUMER_SECRET',
-  BUSINESS_SHORT_CODE: '601426', // Your paybill number
-  PASSKEY: 'YOUR_MPESA_PASSKEY',
-  CALLBACK_URL: 'https://your-domain.com/api/mpesa/callback',
-  CONFIRMATION_URL: 'https://your-domain.com/api/mpesa/confirmation',
-  VALIDATION_URL: 'https://your-domain.com/api/mpesa/validation',
+  CONSUMER_KEY: 'b1sGLEqYi4TsFLz9e4weDLGVOvqzltWF9xYIWaoDeTRLARxI',
+  CONSUMER_SECRET: 'bAA4U1MgstF0LCAlg5l0KMMuuzpB0oX2tsUI85Aw8jYzo9Dt44gMPf3sbHnWzGgX',
+  BUSINESS_SHORT_CODE: '247247', // Your paybill number
+  PASSKEY: 'bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919',
+  CALLBACK_URL: 'https://rebearthsolutions.co.ke/api/mpesa/callback',
+  CONFIRMATION_URL: 'https://rebearthsolutions.co.ke/api/mpesa/confirmation',
+  VALIDATION_URL: 'https://rebearthsolutions.co.ke/api/mpesa/validation',
   BASE_URL: 'https://sandbox.safaricom.co.ke', // Use https://api.safaricom.co.ke for production
 };
 
